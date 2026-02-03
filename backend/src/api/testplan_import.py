@@ -182,7 +182,11 @@ def normalize_rows(raw_rows: Iterable[Dict[str, Any]]) -> Tuple[List[NormalizedR
         # We match by normalized keys.
         key_to_val: Dict[str, Any] = {}
         for k, v in raw.items():
-            std = _HEADER_SYNONYMS.get(_norm_key(k), _norm_key(k))
+            # Some CSV/XLSX parsers can yield non-string keys (e.g. None when a row has
+            # more values than headers). Skip those to avoid 500s during import.
+            if k is None:
+                continue
+            std = _HEADER_SYNONYMS.get(_norm_key(str(k)), _norm_key(str(k)))
             key_to_val[std] = v
 
         suite_name = _coerce_str(key_to_val.get("suite_name")) or "Default"
