@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from typing import Generator, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -25,25 +26,59 @@ def _build_mysql_url() -> str:
     """
     Build a MySQL SQLAlchemy URL from environment variables.
 
+    This project runs in multiple environments. Some runtimes provide MYSQL_URL as a *host*
+    (e.g. "localhost" or "localhost:5001"), while others provide a full DSN
+    (e.g. "mysql://localhost:5001/mydb").
+
+    We support both:
+      - If MYSQL_URL includes a URL scheme (contains '://'), we parse it and construct a
+        SQLAlchemy URL using the `mysql+pymysql` driver.
+      - Otherwise we treat MYSQL_URL as host[:port] and use MYSQL_PORT + MYSQL_DB.
+
     Expected env vars:
-      MYSQL_URL: host (or host:port), e.g. "localhost" (preferred) or "127.0.0.1"
-      MYSQL_USER: username
-      MYSQL_PASSWORD: password
-      MYSQL_DB: database name
-      MYSQL_PORT: port (optional if MYSQL_URL already includes a port)
+      MYSQL_URL: host[:port] or full DSN (mysql://host:port/db)
+      MYSQL_USER: username (optional if embedded in MYSQL_URL DSN)
+      MYSQL_PASSWORD: password (optional if embedded in MYSQL_URL DSN)
+      MYSQL_DB: database name (used if not embedded in MYSQL_URL DSN)
+      MYSQL_PORT: port (optional if host-only and not already in MYSQL_URL)
     """
-    host = os.getenv("MYSQL_URL", "localhost")
+    raw = os.getenv("MYSQL_URL", "localhost")
     user = os.getenv("MYSQL_USER", "")
     password = os.getenv("MYSQL_PASSWORD", "")
     db = os.getenv("MYSQL_DB", "")
     port = os.getenv("MYSQL_PORT", "")
 
-    # If host already contains "host:port", do not append port again.
+    # Case 1: MYSQL_URL is a full DSN like mysql://host:port/db
+    if "://" in raw:
+        parsed = urlparse(raw)
+
+        # parsed.hostname strips brackets for IPv6 and excludes port.
+        host = parsed.hostname or "localhost"
+        resolved_port = parsed.port  # int|None
+
+        # DB name in DSN path is like "/mydb"
+        dsn_db = (parsed.path or "").lstrip("/") or db
+
+        # Allow credentials from DSN to override env, else fall back to env.
+        dsn_user = parsed.username or user
+        dsn_password = parsed.password or password
+
+        # If DSN didn't include a port, use MYSQL_PORT if present.
+        if resolved_port is None and port:
+            try:
+                resolved_port = int(port)
+            except ValueError:
+                # If port is malformed, leave it unset; SQLAlchemy will error clearly later.
+                resolved_port = None
+
+        hostport = f"{host}:{resolved_port}" if resolved_port is not None else host
+        return f"mysql+pymysql://{dsn_user}:{dsn_password}@{hostport}/{dsn_db}?charset=utf8mb4"
+
+    # Case 2: MYSQL_URL is host or host:port
+    host = raw
     if port and ":" not in host:
         host = f"{host}:{port}"
 
-    # Use pymysql driver (pure python).
-    # Example: mysql+pymysql://user:pass@localhost:5001/mydb?charset=utf8mb4
     return f"mysql+pymysql://{user}:{password}@{host}/{db}?charset=utf8mb4"
 
 

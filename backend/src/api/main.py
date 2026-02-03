@@ -25,9 +25,30 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
+# CORS notes:
+# - Browsers disallow `Access-Control-Allow-Origin: *` together with credentials.
+# - Even when we don't explicitly send credentials, many environments prefer explicit origins.
+#
+# Env override:
+# - BACKEND_CORS_ORIGINS: comma-separated list of allowed origins.
+#   Example: "http://localhost:3000,https://your-preview-host"
+import os
+
+_default_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    # Kavia/preview environments may run on different hostnames; allow same-host frontend ports too.
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+]
+_env_origins = os.getenv("BACKEND_CORS_ORIGINS", "").strip()
+allow_origins = (
+    [o.strip() for o in _env_origins.split(",") if o.strip()] if _env_origins else _default_cors_origins
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
